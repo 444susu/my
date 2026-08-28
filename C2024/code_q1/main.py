@@ -59,8 +59,9 @@ def _make_audit_plots(data: dict[str, pd.DataFrame], audit: AuditResult, out_dir
     plt.close(fig)
 
     demand = data["demand"].sort_values("demand_jin", ascending=False)
+    demand = demand.assign(label=demand["crop_id"].astype(str) + "-" + demand["season"])
     fig, ax = plt.subplots(figsize=(12, 5))
-    demand.plot.bar(x="crop_id", y="demand_jin", ax=ax, color="#F58518", legend=False)
+    demand.plot.bar(x="label", y="demand_jin", ax=ax, color="#F58518", legend=False)
     ax.set_title("问题1需求基准：2023实际产量汇总")
     ax.set_xlabel("作物编号—季次组合（按汇总表顺序）")
     ax.set_ylabel("需求基准（斤）")
@@ -90,7 +91,7 @@ def _write_report(data: dict[str, pd.DataFrame], audit: AuditResult, out_dir: Pa
     lines += ["", "## 已执行的机械性清洗", "", "| 步骤 | 影响记录数 | 规则 |", "|---|---:|---|"]
     for entry in data["cleaning_log"]:
         lines.append(f"| {entry['step']} | {entry['affected_rows']} | {entry['rule']} |")
-    lines += ["", "## 输出说明", "", "- `clean_*.csv`：清洗后的可复用数据。", "- `parameters_with_inheritance.csv`：含智慧大棚第一季的附件明确继承参数。", "- `demand_baseline.csv`：按作物—季次由2023实际产量构建的需求基准。", "- `audit_checks.csv` 和本报告：可逐项复核的门控证据。", "- 三张 PNG：缺失、种植面积分布和需求基准的审计图。", "", "模块 B 的 MILP 调用未被实现或执行；仅当全部检查通过后才可进入。"]
+    lines += ["", "## 输出说明", "", "- `clean_*.csv`：清洗后的可复用数据。", "- `clean_parameters.csv`：含智慧大棚第一季的参数；其继承明细见 `parameter_inheritance_smart_greenhouse_first_season.csv`。", "- `clean_demand.csv`：按作物—季次由2023实际产量构建的需求基准。", "- `clean_history_z_2023.csv`、`clean_history_bean_2023.csv` 与 `clean_adjacency_2023_to_2024.csv`：后续重茬与三年豆类约束的历史基础。", "- `audit_checks.csv` 和本报告：可逐项复核的门控证据。", "- 三张 PNG：缺失、种植面积分布和需求基准的审计图。", "", "模块 B 的 MILP 调用未被实现或执行；仅当全部硬检查通过、仅保留不改变模型方向的WARNING时才可进入。"]
     (out_dir / "audit_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
