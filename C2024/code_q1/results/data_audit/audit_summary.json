@@ -1,8 +1,8 @@
 {
   "module": "A 数据读取、清洗、参数构建和数据审计",
   "passed": true,
-  "check_count": 22,
-  "pass_count": 22,
+  "check_count": 24,
+  "pass_count": 24,
   "fail_count": 0,
   "raw_row_counts": {
     "land": 54,
