@@ -29,6 +29,7 @@ fprintf('C2024 Q1 MATLAB full run, alpha=0\n');
 fprintf('MATLAB version: %s\n',version);
 fprintf('Started: %s\n',char(datetime('now','Format','yyyy-MM-dd HH:mm:ss')));
 fprintf('Gurobi function: %s\n',which('gurobi'));
+fprintf('beta=%.3f, Nmax=%d, NmaxFungi=%d\n',cfg.beta,cfg.Nmax,cfg.NmaxFungi);
 fprintf('============================================================\n');
 rng(cfg.seed,'twister');
 
@@ -73,6 +74,13 @@ try
         error('Q1:AuditFailed','MATLAB模块A审计未通过，已停止MILP。');
     end
 
+    %% Structural feasibility precheck
+    fprintf('\n[Precheck] Checking obvious structural feasibility...\n');
+    precheck = precheck_model_feasibility(data,cfg);
+    writetable(precheck.table,fullfile(cfg.alpha0Dir,'structural_feasibility_precheck.csv'));
+    disp(precheck.table);
+    fprintf('STRUCTURAL_PRECHECK_PASS=%d\n',precheck.passed);
+
     %% Module B: build alpha=0 MILP
     fprintf('\n[Module B] Building MILP...\n');
     [model,vars,meta] = build_MILP(data,cfg,0);
@@ -80,7 +88,8 @@ try
 
     summaryTable = table( ...
         meta.nvar,meta.continuous_variables,meta.binary_variables,meta.ncon, ...
-        'VariableNames',{'variables','continuous_variables','binary_variables','constraints'});
+        meta.Nmax,meta.NmaxFungi, ...
+        'VariableNames',{'variables','continuous_variables','binary_variables','constraints','Nmax','NmaxFungi'});
     writetable(summaryTable,fullfile(cfg.alpha0Dir,'model_summary.csv'));
 
     fprintf('MODEL variables=%d continuous=%d binary=%d constraints=%d\n', ...
@@ -169,4 +178,6 @@ fprintf(fid,'关键计数：地块=%d；作物=%d；2023记录=%d；参数=%d；
     audit.summary.demand_support, ...
     audit.summary.positive_demand, ...
     audit.summary.zero_demand);
+fprintf(fid,'\n基准分散度参数：普通作物 Nmax=%d；普通大棚第二季食用菌 NmaxFungi=%d。\n', ...
+    cfg.Nmax,cfg.NmaxFungi);
 end
