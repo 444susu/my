@@ -1,0 +1,4 @@
+interface:
+  display_name: "全国大学生数学建模工作流"
+  short_description: "严谨执行国赛建模的数据审计、模型确认、验证与量化建议"
+  default_prompt: "Use $cumcm-modeling-workflow to solve this CUMCM problem with data auditing, user approval gates, rigorous validation, and quantified recommendations."
