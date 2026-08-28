@@ -105,7 +105,21 @@ def validate_data(data: dict[str, pd.DataFrame], cfg: Config) -> AuditResult:
     price_valid = (statistics["price_low"] >= 0).all() and (statistics["price_high"] >= statistics["price_low"]).all() and statistics[["price_low", "price_high", "price_mid"]].notna().all().all()
     checks.append(_check("价格区间解析", price_valid, "107 条均为有效 low<=high 区间", f"有效={int(price_valid)}", "价格参数不能进入目标函数。"))
     demand_crops_complete = set(demand["crop_id"]) == set(range(1, 42))
-    checks.append(_check("需求计算", (demand["demand_jin"] > 0).all() and not demand.empty and demand_crops_complete, "41种作物均有正需求基准", f"组合数={len(demand)}，覆盖作物={demand['crop_id'].nunique()}，非正数={int((demand['demand_jin'] <= 0).sum())}", "销售上限无法构建。"))
+    historical_demand = demand[demand["demand_source"] == "2023实际产量"]
+    historical_demand_valid = not historical_demand.empty and (historical_demand["demand_jin"] > 0).all()
+    checks.append(_check("需求计算", (demand["demand_jin"] >= 0).all() and not demand.empty and demand_crops_complete and historical_demand_valid, "41种作物均被覆盖；2023实际种植组合需求为正", f"组合数={len(demand)}，覆盖作物={demand['crop_id'].nunique()}，负需求={int((demand['demand_jin'] < 0).sum())}", "销售上限无法构建。"))
+    demand_support = demand[["crop_id", "season"]].drop_duplicates()
+    allowed_support = allowed[["crop_id", "season"]].drop_duplicates()
+    zero_demand = demand[demand["demand_source"] == "2023未种植，按已确认口径置0"].copy()
+    support_complete = (
+        set(map(tuple, demand_support.to_numpy())) == set(map(tuple, allowed_support.to_numpy()))
+        and len(demand_support) == len(demand)
+        and (zero_demand["demand_jin"] == 0).all()
+        and historical_demand_valid
+    )
+    details["demand_zero_support"] = zero_demand
+    details["demand_support"] = demand
+    checks.append(_check("未来可种植作物—季次需求support完整", support_complete, "需求键集=allowed键集；实际种植需求>0，未种植需求=0", f"support={len(demand_support)}，正需求={len(historical_demand)}，零需求={len(zero_demand)}", "q/e产量守恒和销售上限无法覆盖全部未来合法生产组合。"))
 
     planted_ratios = (history["plant_area_mu"] / history["area_mu"]).dropna()
     ratio_min = float(planted_ratios.min()) if not planted_ratios.empty else float("nan")
