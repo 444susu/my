@@ -55,7 +55,6 @@ for j = 1:J
         for k = 1:K
             drow = find(data.demand.crop_id == j & data.demand.season_idx == k,1,'first');
             if ~isempty(drow)
-                % Use i=0 to ask parameter_for to pick any allowed plot safely.
                 [priceValue,~,~] = parameter_for(data,j,k,0,cfg);
                 q_id(j,t,k) = addvar(priceValue,0,inf,'C');
                 e_id(j,t,k) = addvar(alpha*priceValue,0,inf,'C');
@@ -129,9 +128,7 @@ for i = 1:I
                 xid = x_id(i,j,t,k);
                 zid = z_id(i,j,t,k);
                 if xid > 0
-                    % beta*A*z <= x  <=> -x + beta*A*z <= 0
                     addcon([xid;zid],[-1;cfg.beta*area_i],'<',0,'C2_xz_lower');
-                    % x <= A*z  <=> x - A*z <= 0
                     addcon([xid;zid],[1;-area_i],'<',0,'C2_xz_upper');
                 end
             end
@@ -159,11 +156,8 @@ for i = waterPlots
         secondIds = nonzeros(squeeze(z_id(i,cfg.secondSeasonWaterVegetables,t,cfg.K_SECOND)));
         modeId = r_id(i,t);
 
-        % z_rice = r
         addcon([riceId;modeId],[1;-1],'=',0,'C4_water_rice_mode');
-        % sum(first) >= 1-r  <=> -sum(first)-r <= -1
         addcon([firstIds;modeId],[-ones(numel(firstIds),1);-1],'<',-1,'C4_water_first_occupy');
-        % exactly one second-season crop in vegetable mode
         addcon([secondIds;modeId],[ones(numel(secondIds),1);1],'=',1,'C4_water_second_unique');
     end
 end
@@ -200,7 +194,6 @@ for i = 1:I
 
     elseif strcmp(lt,'智慧大棚')
         for j = cfg.firstSeasonVegetables
-            % 2023 second season -> 2024 first season
             if data.historyZ(i,j,cfg.K_SECOND) > 0
                 first2024 = z_id(i,j,1,cfg.K_FIRST);
                 if first2024 > 0
@@ -217,20 +210,16 @@ for i = 1:I
         end
 
     elseif strcmp(lt,'水浇地')
-        % Only rice can repeat across adjacent years in rice mode.
         j = cfg.riceCrop;
         addhist(i,j,cfg.K_SINGLE);
         for t = 1:T-1
             addrot(z_id(i,j,t,cfg.K_SINGLE),z_id(i,j,t+1,cfg.K_SINGLE));
         end
     end
-    % Ordinary greenhouse and irrigated vegetable seasons have disjoint
-    % adjacent crop sets, so same-crop chronological repeat is impossible.
 end
 
 %% C10 rolling three-year bean requirement, including 2023-2025
 for i = 1:I
-    % Window 2023-2025: historical indicator + decision years 2024,2025.
     ids = zeros(0,1);
     for t = 1:2
         for j = cfg.beanCrops
@@ -247,7 +236,6 @@ for i = 1:I
         addcon(ids,-ones(numel(ids),1),'<',-requiredDecisionBeans,'C10_bean_2023_2025');
     end
 
-    % Pure decision windows: 2024-2026 through 2028-2030.
     for startYear = 1:T-2
         ids = zeros(0,1);
         for t = startYear:startYear+2
@@ -264,13 +252,23 @@ for i = 1:I
     end
 end
 
-%% C11 Nmax dispersal, C12 production split, C13 demand cap
+%% C11 dispersal, C12 production split, C13 demand cap
 for j = 1:J
     for t = 1:T
         for k = 1:K
             zIds = nonzeros(squeeze(z_id(:,j,t,k)));
             if ~isempty(zIds)
-                addcon(zIds,ones(numel(zIds),1),'<',cfg.Nmax,'C11_nmax');
+                % User-confirmed feasibility refinement:
+                % ordinary greenhouse second-season mushrooms use NmaxFungi=4;
+                % all other crop-season combinations retain Nmax=3.
+                if ismember(j,cfg.mushroomCrops) && k == cfg.K_SECOND
+                    dispersalLimit = cfg.NmaxFungi;
+                    constraintName = 'C11_nmax_fungi';
+                else
+                    dispersalLimit = cfg.Nmax;
+                    constraintName = 'C11_nmax';
+                end
+                addcon(zIds,ones(numel(zIds),1),'<',dispersalLimit,constraintName);
             end
 
             qid = q_id(j,t,k);
@@ -324,6 +322,8 @@ meta.ncon = ncon;
 meta.binary_variables = sum(vtype=='B');
 meta.continuous_variables = sum(vtype=='C');
 meta.alpha = alpha;
+meta.Nmax = cfg.Nmax;
+meta.NmaxFungi = cfg.NmaxFungi;
 end
 
 function [priceValue,yieldValue,costValue] = parameter_for(data,j,k,i,cfg)
