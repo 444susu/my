@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -15,6 +16,7 @@ from data.build_allowed import build_allowed
 from data.build_history import build_history_and_demand
 from data.build_parameters import build_parameters
 from data.read_clean import clean_data, read_raw_excel
+from data.pipeline import prepare_verified_data
 from data.validate_data import AuditResult, validate_data
 
 
@@ -139,6 +141,46 @@ def run_module_a() -> AuditResult:
     return audit
 
 
-if __name__ == "__main__":
+def run_alpha0_baseline() -> None:
+    """模块 A 通过后，运行 alpha=0 基准 MILP 与独立验证。"""
+    from model.build_model import build_model
+    from model.solve import solve_model
+    from model.validate_solution import validate_solution
+
+    cfg = load_config()
     run_module_a()
+    data, audit = prepare_verified_data(cfg)
+    if not audit.passed:
+        raise RuntimeError("模块 A 未通过，禁止构建 MILP。")
+    output_dir = cfg.project_root / "code_q1" / "results" / "alpha_0"
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    model, variables, meta = build_model(data, cfg, cfg.baseline_alpha)
+    model.write(str(output_dir / "alpha_0_model.lp"))
+    _save_frame(pd.DataFrame(meta["rotation_pairs"]), output_dir / "rotation_adjacency_constraints.csv")
+    (output_dir / "constraint_counts.json").write_text(json.dumps(meta["constraint_counts"], ensure_ascii=False, indent=2), encoding="utf-8")
+    result = solve_model(model, output_dir)
+    result["model_size"] = meta["model_size"]
+    if not result["feasible"]:
+        (output_dir / "solver_summary.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        raise RuntimeError(f"alpha=0 基准模型未得到可验证解：{result}")
+    passed, validation = validate_solution(data, cfg, cfg.baseline_alpha, model, variables, meta)
+    _save_frame(validation, output_dir / "solution_validation_failures.csv")
+    result["solution_validation_passed"] = passed
+    (output_dir / "solver_summary.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    if not passed:
+        raise RuntimeError("alpha=0 解独立验证未通过；禁止继续情形2。")
+    print(f"模块 B alpha=0：PASS；目标值={result['objective']:.2f}，MIPGap={result['mip_gap']:.6g}，用时={result['runtime_seconds']:.2f}秒")
+    print(f"基准结果目录：{output_dir}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="C2024问题1：模块A审计与alpha=0基准MILP")
+    parser.add_argument("--alpha0", action="store_true", help="在模块A通过后运行alpha=0基准MILP")
+    args = parser.parse_args()
+    if args.alpha0:
+        run_alpha0_baseline()
+    else:
+        run_module_a()
 
