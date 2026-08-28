@@ -12,6 +12,7 @@ class Config:
     beta: float = 0.5
     nmax: int = 3
     alpha_list: tuple[float, ...] = (0.0, 0.5)
+    baseline_alpha: float = 0.0
     random_seed: int = 42
 
     @property
