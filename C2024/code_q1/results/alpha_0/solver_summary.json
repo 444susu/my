@@ -1,0 +1,11 @@
+{
+  "feasible": false,
+  "reason": "GurobiError",
+  "error_code": 10010,
+  "error_message": "Model too large for size-limited license; visit https://gurobi.com/unrestricted for more information",
+  "model_size": {
+    "variables": 15750,
+    "constraints": 20645,
+    "binary_variables": 7490
+  }
+}
