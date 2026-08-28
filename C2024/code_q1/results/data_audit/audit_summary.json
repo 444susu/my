@@ -1,0 +1,35 @@
+{
+  "module": "A 数据读取、清洗、参数构建和数据审计",
+  "passed": true,
+  "check_count": 15,
+  "pass_count": 15,
+  "fail_count": 0,
+  "raw_row_counts": {
+    "land": 54,
+    "crop": 45,
+    "plant_2023": 87,
+    "statistics_2023": 110
+  },
+  "cleaning_log": [
+    {
+      "step": "剔除附件1作物表中的说明/空白行",
+      "affected_rows": 4,
+      "rule": "仅保留具有数值作物编号的记录；被剔除行均为附件说明或空白行。"
+    },
+    {
+      "step": "填充2023种植表合并单元格地块名",
+      "affected_rows": 33,
+      "rule": "按附件中的连续合并单元格，使用上一条有效地块名向下填充。"
+    },
+    {
+      "step": "剔除附件2统计表中的说明/空白行",
+      "affected_rows": 3,
+      "rule": "仅保留具有数值作物编号的统计参数记录；被剔除行均为附件说明或空白行。"
+    },
+    {
+      "step": "解析销售价格区间",
+      "affected_rows": 107,
+      "rule": "将 low-high 拆为下界、上界，并按已确认口径计算价格中点。"
+    }
+  ]
+}
