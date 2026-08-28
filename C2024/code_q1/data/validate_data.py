@@ -21,8 +21,8 @@ class AuditResult:
         return bool(self.checks["passed"].all())
 
 
-def _check(name: str, passed: bool, expected: str, actual: Any, impact: str) -> dict[str, Any]:
-    return {"check": name, "passed": bool(passed), "expected": expected, "actual": str(actual), "impact_if_failed": impact}
+def _check(name: str, passed: bool, expected: str, actual: Any, impact: str, status: str = "PASS") -> dict[str, Any]:
+    return {"check": name, "passed": bool(passed), "expected": expected, "actual": str(actual), "impact_if_failed": impact, "status": status}
 
 
 def validate_data(data: dict[str, pd.DataFrame], cfg: Config) -> AuditResult:
@@ -30,6 +30,7 @@ def validate_data(data: dict[str, pd.DataFrame], cfg: Config) -> AuditResult:
     plant, statistics = data["plant_2023"], data["statistics_2023"]
     parameters, history = data["parameters"], data["history_2023"]
     allowed, demand, dispersal = data["allowed"], data["demand"], data["dispersal"]
+    history_z, history_bean, adjacency = data["history_z_2023"], data["history_bean_2023"], data["adjacency_2023_to_2024"]
     checks: list[dict[str, Any]] = []
     details: dict[str, pd.DataFrame] = {}
 
@@ -39,7 +40,12 @@ def validate_data(data: dict[str, pd.DataFrame], cfg: Config) -> AuditResult:
     observed_area = dict(zip(area_by_type["land_type"], area_by_type["area_mu"]))
     details["area_by_land_type"] = area_by_type
     checks.append(_check("地块数量", len(land) == 54, "54", len(land), "地块集合错误会改变模型维度。"))
+    valid_land_types = {"平旱地", "梯田", "山坡地", "水浇地", "普通大棚", "智慧大棚"}
+    checks.append(_check("地块ID唯一且非空", land["plot_id"].notna().all() and land["plot_id"].nunique() == 54, "54个唯一、非空地块ID", f"非空={int(land['plot_id'].notna().sum())}，唯一={land['plot_id'].nunique()}", "地块索引会错误合并。"))
+    checks.append(_check("地块面积与类型合法", (land["area_mu"] > 0).all() and set(land["land_type"]) <= valid_land_types, "面积>0，且仅六种题面地块类型", f"非正面积={int((land['area_mu'] <= 0).sum())}，非法类型={sorted(set(land['land_type']) - valid_land_types)}", "容量或适宜性约束不可用。"))
     checks.append(_check("作物数量", len(crop) == 41, "41", len(crop), "作物集合错误会改变适宜性和决策变量。"))
+    crop_id_complete = set(crop["crop_id"]) == set(range(1, 42)) and crop["crop_id"].nunique() == 41
+    checks.append(_check("作物编号集合完整", crop_id_complete, "编号1—41各一次", f"唯一数={crop['crop_id'].nunique()}，缺失={sorted(set(range(1,42)) - set(crop['crop_id']))}", "作物集合或固定豆类集合可能错误。"))
     checks.append(_check("各地块类型面积", observed_area == expected_area, str(expected_area), observed_area, "面积容量约束可能错误。"))
 
     crop_conflicts = crop.groupby("crop_id").agg(crop_name_nunique=("crop_name", "nunique"), crop_type_nunique=("crop_type", "nunique")).reset_index()
@@ -57,6 +63,21 @@ def validate_data(data: dict[str, pd.DataFrame], cfg: Config) -> AuditResult:
     details["unmatched_history_parameters"] = unmatched_history
     checks.append(_check("所有2023记录匹配参数", unmatched_history.empty, "0 条未匹配", len(unmatched_history), "不能计算需求，必须停止。"))
 
+    positive_z = history_z.query("history_z_2023 == 1")
+    expected_positive = plant[["plot_id", "crop_id", "season"]].drop_duplicates()
+    state_complete = len(history_z) == len(allowed) and set(history_z["history_z_2023"]) <= {0, 1} and len(positive_z) == len(expected_positive)
+    details["history_z_2023"] = history_z
+    checks.append(_check("2023历史0-1种植状态", state_complete, "所有allowed键有0/1状态，87个历史正种植键", f"状态键={len(history_z)}，正状态={len(positive_z)}", "无法可靠建立2023→2024重茬边界。"))
+
+    bean_state_complete = len(history_bean) == 54 and history_bean["plot_id"].nunique() == 54 and set(history_bean["history_bean_2023"]) <= {0, 1}
+    details["history_bean_2023"] = history_bean
+    checks.append(_check("2023地块豆类历史状态", bean_state_complete, "54个地块均有0/1豆类状态", f"记录={len(history_bean)}，种过豆类={int(history_bean['history_bean_2023'].sum())}", "第一个三年豆类窗口无法构建。"))
+
+    valid_last_seasons = adjacency["last_season_2023"].isin({"单季", "第一季", "第二季"})
+    adjacency_complete = len(adjacency) == 54 and adjacency["plot_id"].nunique() == 54 and valid_last_seasons.all() and adjacency["next_season_2024"].notna().all()
+    details["adjacency_2023_to_2024"] = adjacency
+    checks.append(_check("2023—2024历史邻接基础", adjacency_complete, "54块地均有最后实际季次及2024首季衔接", f"记录={len(adjacency)}，无最后季次={int(adjacency['last_season_2023'].isna().sum())}", "重茬约束无法按真实时间链构建。"))
+
     history_allowed = plant.merge(allowed[["plot_id", "crop_id", "season"]], on=["plot_id", "crop_id", "season"], how="left", indicator=True)
     historical_disallowed = history_allowed.query("_merge != 'both'").drop(columns="_merge")
     details["historical_disallowed"] = historical_disallowed
@@ -70,7 +91,8 @@ def validate_data(data: dict[str, pd.DataFrame], cfg: Config) -> AuditResult:
 
     price_valid = (statistics["price_low"] >= 0).all() and (statistics["price_high"] >= statistics["price_low"]).all() and statistics[["price_low", "price_high", "price_mid"]].notna().all().all()
     checks.append(_check("价格区间解析", price_valid, "107 条均为有效 low<=high 区间", f"有效={int(price_valid)}", "价格参数不能进入目标函数。"))
-    checks.append(_check("需求计算", (demand["demand_jin"] > 0).all() and not demand.empty, "每个出现的作物—季次需求为正", f"组合数={len(demand)}，非正数={int((demand['demand_jin'] <= 0).sum())}", "销售上限无法构建。"))
+    demand_crops_complete = set(demand["crop_id"]) == set(range(1, 42))
+    checks.append(_check("需求计算", (demand["demand_jin"] > 0).all() and not demand.empty and demand_crops_complete, "41种作物均有正需求基准", f"组合数={len(demand)}，覆盖作物={demand['crop_id'].nunique()}，非正数={int((demand['demand_jin'] <= 0).sum())}", "销售上限无法构建。"))
 
     planted_ratios = (history["plant_area_mu"] / history["area_mu"]).dropna()
     ratio_min = float(planted_ratios.min()) if not planted_ratios.empty else float("nan")
@@ -78,12 +100,22 @@ def validate_data(data: dict[str, pd.DataFrame], cfg: Config) -> AuditResult:
     checks.append(_check("beta=0.5历史证据", abs(ratio_min - cfg.beta) < 1e-9 and (planted_ratios >= cfg.beta - 1e-9).all(), "历史正种植面积比例最小值=0.5，且无值低于0.5", f"最小值={ratio_min:.6g}", "beta 管理参数缺乏已确认的数据证据。"))
     details["dispersal_2023"] = dispersal
     checks.append(_check("2023分散地块数已构建", not dispersal.empty, "输出作物—季次的历史分散地块数", f"组合数={len(dispersal)}", "Nmax 的审计基线缺失。"))
+    nmax_conflicts = dispersal[dispersal["plot_count_2023"] > cfg.nmax].sort_values(["plot_count_2023", "crop_id"], ascending=[False, True])
+    details["nmax_historical_conflicts"] = nmax_conflicts
+    checks.append(_check("Nmax=3与历史分散度比较", True, "识别历史分散度超过3块的组合，并保留Nmax=3", f"超过Nmax的组合={len(nmax_conflicts)}；{nmax_conflicts.to_dict('records')}", "异常但不改变模型方向：Nmax=3比部分2023实际经营更严格，后续必须重点做Nmax敏感性分析。", status="WARNING" if not nmax_conflicts.empty else "PASS"))
 
     allowed_key = allowed[["land_type", "crop_id", "season"]].drop_duplicates()
-    parameter_key = parameters[["land_type", "crop_id", "season"]].drop_duplicates()
-    missing_allowed_parameters = allowed_key.merge(parameter_key, on=["land_type", "crop_id", "season"], how="left", indicator=True).query("_merge != 'both'").drop(columns="_merge")
-    details["allowed_without_parameters"] = missing_allowed_parameters
-    checks.append(_check("所有allowed组合均有参数", missing_allowed_parameters.empty, "0 个 allowed=1 组合缺亩产/成本/价格参数", len(missing_allowed_parameters), "合法决策变量没有完整经济参数。"))
+    parameter_values = parameters[["land_type", "crop_id", "season", "yield_jin_per_mu", "cost_yuan_per_mu", "price_mid", "parameter_source"]]
+    allowed_parameters = allowed_key.merge(parameter_values, on=["land_type", "crop_id", "season"], how="left", validate="one_to_one")
+    invalid_allowed_parameters = allowed_parameters[
+        allowed_parameters[["yield_jin_per_mu", "cost_yuan_per_mu", "price_mid"]].isna().any(axis=1)
+        | (allowed_parameters["yield_jin_per_mu"] <= 0)
+        | (allowed_parameters["cost_yuan_per_mu"] < 0)
+        | (allowed_parameters["price_mid"] <= 0)
+    ]
+    details["allowed_parameter_values"] = allowed_parameters
+    details["allowed_invalid_parameters"] = invalid_allowed_parameters
+    checks.append(_check("所有allowed组合的参数值合法", invalid_allowed_parameters.empty, "每个allowed组合：yield>0、cost>=0、price>0", f"allowed组合={len(allowed_parameters)}，非法参数={len(invalid_allowed_parameters)}", "合法决策变量没有完整有效的经济参数。"))
 
     return AuditResult(checks=pd.DataFrame(checks), details=details)
 
