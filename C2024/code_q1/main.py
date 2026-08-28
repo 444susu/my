@@ -72,7 +72,7 @@ def _make_audit_plots(data: dict[str, pd.DataFrame], audit: AuditResult, out_dir
 
 def _write_report(data: dict[str, pd.DataFrame], audit: AuditResult, out_dir: Path) -> None:
     summary = audit.checks.copy()
-    summary["status"] = np.where(summary["passed"], "PASS", "FAIL")
+    summary["status"] = np.where(summary["passed"], summary["status"], "FAIL")
     _save_frame(summary, out_dir / "audit_checks.csv")
     payload = {
         "module": "A 数据读取、清洗、参数构建和数据审计",
@@ -105,16 +105,19 @@ def run_module_a() -> AuditResult:
     clean = clean_data(raw, cfg)
     parameters, inherited = build_parameters(clean.statistics_2023)
     allowed = build_allowed(clean.land, cfg.seasons)
-    history, demand, dispersal = build_history_and_demand(clean.plant_2023, clean.land, parameters)
+    history, demand, dispersal, history_z, history_bean, adjacency = build_history_and_demand(
+        clean.plant_2023, clean.land, parameters, allowed
+    )
     data: dict[str, object] = {
         "land": clean.land, "crop": clean.crop, "plant_2023": clean.plant_2023,
         "statistics_2023": clean.statistics_2023, "parameters": parameters, "allowed": allowed,
         "history_2023": history, "demand": demand, "dispersal": dispersal,
+        "history_z_2023": history_z, "history_bean_2023": history_bean, "adjacency_2023_to_2024": adjacency,
         "raw_row_counts": clean.raw_row_counts, "cleaning_log": clean.cleaning_log,
     }
     audit = validate_data(data, cfg)  # type: ignore[arg-type]
 
-    for name in ["land", "crop", "plant_2023", "statistics_2023", "parameters", "allowed", "history_2023", "demand", "dispersal"]:
+    for name in ["land", "crop", "plant_2023", "statistics_2023", "parameters", "allowed", "history_2023", "history_z_2023", "history_bean_2023", "adjacency_2023_to_2024", "demand", "dispersal"]:
         _save_frame(data[name], cfg.audit_dir / f"clean_{name}.csv")  # type: ignore[arg-type]
     _save_frame(inherited, cfg.audit_dir / "parameter_inheritance_smart_greenhouse_first_season.csv")
     for name, detail in audit.details.items():
