@@ -19,11 +19,18 @@ def build_history_and_demand(
         parameters[parameter_columns], on=["crop_id", "land_type", "season"], how="left", validate="many_to_one"
     )
     history["production_jin"] = history["plant_area_mu"] * history["yield_jin_per_mu"]
-    demand = (
+    observed_demand = (
         history.groupby(["crop_id", "season"], as_index=False)["production_jin"]
         .sum()
         .rename(columns={"production_jin": "demand_jin"})
     )
+    # 对每一个未来允许生产的作物—季次组合保留需求键；2023未种植时，已确认口径要求需求为0。
+    demand_support = allowed[["crop_id", "season"]].drop_duplicates()
+    demand = demand_support.merge(observed_demand, on=["crop_id", "season"], how="left", validate="one_to_one")
+    demand["demand_source"] = demand["demand_jin"].notna().map({
+        True: "2023实际产量", False: "2023未种植，按已确认口径置0"
+    })
+    demand["demand_jin"] = demand["demand_jin"].fillna(0.0)
     dispersal = (
         history.groupby(["crop_id", "season"], as_index=False)["plot_id"]
         .nunique()
