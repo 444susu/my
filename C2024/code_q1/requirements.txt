@@ -2,5 +2,4 @@ pandas
 numpy
 matplotlib
 openpyxl
-gurobipy
-
+gurobipy==10.0.1
