@@ -77,6 +77,19 @@ def validate_data(data: dict[str, pd.DataFrame], cfg: Config) -> AuditResult:
     adjacency_complete = len(adjacency) == 54 and adjacency["plot_id"].nunique() == 54 and valid_last_seasons.all() and adjacency["next_season_2024"].notna().all()
     details["adjacency_2023_to_2024"] = adjacency
     checks.append(_check("2023—2024历史邻接基础", adjacency_complete, "54块地均有最后实际季次及2024首季衔接", f"记录={len(adjacency)}，无最后季次={int(adjacency['last_season_2023'].isna().sum())}", "重茬约束无法按真实时间链构建。"))
+    last_season_rules = {
+        "平旱地": {"单季"}, "梯田": {"单季"}, "山坡地": {"单季"},
+        "普通大棚": {"第二季"}, "智慧大棚": {"第二季"}, "水浇地": {"单季", "第二季"},
+    }
+    adjacency_consistency = adjacency.copy()
+    adjacency_consistency["allowed_last_seasons"] = adjacency_consistency["land_type"].map(lambda x: "|".join(sorted(last_season_rules[x])))
+    adjacency_consistency["consistent"] = adjacency_consistency.apply(
+        lambda row: row["last_season_2023"] in last_season_rules[row["land_type"]], axis=1
+    )
+    adjacency_inconsistent = adjacency_consistency[~adjacency_consistency["consistent"]]
+    details["adjacency_consistency"] = adjacency_consistency
+    details["adjacency_inconsistent"] = adjacency_inconsistent
+    checks.append(_check("2023最后实际季次与地块制度一致", adjacency_inconsistent.empty, "旱地/梯田/山坡地=单季；两类大棚=第二季；水浇地=单季或第二季", f"异常地块={len(adjacency_inconsistent)}", "历史时间链与种植制度不一致，不能建立重茬边界。"))
 
     history_allowed = plant.merge(allowed[["plot_id", "crop_id", "season"]], on=["plot_id", "crop_id", "season"], how="left", indicator=True)
     historical_disallowed = history_allowed.query("_merge != 'both'").drop(columns="_merge")
@@ -116,6 +129,14 @@ def validate_data(data: dict[str, pd.DataFrame], cfg: Config) -> AuditResult:
     details["allowed_parameter_values"] = allowed_parameters
     details["allowed_invalid_parameters"] = invalid_allowed_parameters
     checks.append(_check("所有allowed组合的参数值合法", invalid_allowed_parameters.empty, "每个allowed组合：yield>0、cost>=0、price>0", f"allowed组合={len(allowed_parameters)}，非法参数={len(invalid_allowed_parameters)}", "合法决策变量没有完整有效的经济参数。"))
+    price_consistency = (
+        allowed_parameters.groupby(["crop_id", "season"], as_index=False)
+        .agg(land_type_count=("land_type", "nunique"), price_mid_nunique=("price_mid", "nunique"), price_mid_values=("price_mid", lambda values: "|".join(map(str, sorted(set(values))))))
+    )
+    price_dimension_conflicts = price_consistency[price_consistency["price_mid_nunique"] != 1]
+    details["price_by_crop_season"] = price_consistency
+    details["price_dimension_conflicts"] = price_dimension_conflicts
+    checks.append(_check("作物—季次销售价格可安全降维", price_dimension_conflicts.empty, "每个(crop_id, season)的price_mid唯一", f"组合={len(price_consistency)}，多价格组合={len(price_dimension_conflicts)}", "q/e按作物—年—季汇总时收入会失真，必须重定销售变量维度。"))
 
     return AuditResult(checks=pd.DataFrame(checks), details=details)
 
