@@ -91,6 +91,10 @@ def _write_report(data: dict[str, pd.DataFrame], audit: AuditResult, out_dir: Pa
     lines += ["", "## 已执行的机械性清洗", "", "| 步骤 | 影响记录数 | 规则 |", "|---|---:|---|"]
     for entry in data["cleaning_log"]:
         lines.append(f"| {entry['step']} | {entry['affected_rows']} | {entry['rule']} |")
+    zero_demand = data["demand"].query("demand_source == '2023未种植，按已确认口径置0'")
+    lines += ["", "## 零需求组合", "", "这些组合未来允许种植、但2023未实际种植；按已确认口径其预期销售量为0。", "", "| 作物编号 | 季次 | 需求（斤） | 来源 |", "|---:|---|---:|---|"]
+    for row in zero_demand.itertuples(index=False):
+        lines.append(f"| {row.crop_id} | {row.season} | {row.demand_jin:.1f} | {row.demand_source} |")
     lines += ["", "## 输出说明", "", "- `clean_*.csv`：清洗后的可复用数据。", "- `clean_parameters.csv`：含智慧大棚第一季的参数；其继承明细见 `parameter_inheritance_smart_greenhouse_first_season.csv`。", "- `clean_demand.csv`：按作物—季次由2023实际产量构建的需求基准。", "- `clean_history_z_2023.csv`、`clean_history_bean_2023.csv` 与 `clean_adjacency_2023_to_2024.csv`：后续重茬与三年豆类约束的历史基础。", "- `audit_checks.csv` 和本报告：可逐项复核的门控证据。", "- 三张 PNG：缺失、种植面积分布和需求基准的审计图。", "", "模块 B 的 MILP 调用未被实现或执行；仅当全部硬检查通过、仅保留不改变模型方向的WARNING时才可进入。"]
     (out_dir / "audit_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
